@@ -1,0 +1,16 @@
+{
+  "name": "wp-telegram-poster",
+  "version": "1.0.0",
+  "description": "Telegram üzerinden WordPress'e haber yayınlayan bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "express": "^5.2.1",
+    "telegraf": "^4.16.3",
+    "wpapi": "^1.2.2"
+  }
+}
