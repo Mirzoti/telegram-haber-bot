@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Telegraf } = require('telegraf');
 const WPAPI = require('wpapi');
 const axios = require('axios'); // Telegram'dan görseli indirip WP'ye aktarmak için
+const { GoogleGenAI } = require('@google/genai');
 
 // -- Çevresel değişkenleri yükle --
 const {
@@ -107,17 +108,61 @@ bot.on('text', async (ctx) => {
                 
             const featuredImageId = mediaUpload.id;
 
+            let generatedTags = [];
+            if (process.env.GEMINI_API_KEY) {
+                try {
+                    ctx.reply("🤖 Metin okunuyor, yapay zeka SEO etiketlerini üretiyor...");
+                    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+                    const prompt = `Sen profesyonel bir gazeteci ve SEO uzmanısın. Aşağıdaki haber metninden, Google aramalarında en çok tıklanmayı sağlayacak, konuyu en iyi özetleyen 5 anahtar kelimeyi (etiketi) çıkar.
+                    Kurallar:
+                    1. Sadece kelimelerin arasına virgül koy. (Örn: Haber, Ekonomi, İzmir, Yatırım, Proje)
+                    2. Başka tek bir cümle bile yazma. Madde imi, sayı, giriş cümlesi vs. KESİNLİKLE OLMASIN.
+                    3. Her kelimenin ilk harfi mutlaka büyük olsun.
+                    
+                    Haber Başlığı: ${title}
+                    Haber Metni: ${content}`;
+
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.5-flash',
+                        contents: prompt
+                    });
+
+                    const aiTags = response.text.split(',').map(t => t.trim()).filter(t => t.length > 0);
+                    ctx.reply(`🧠 Yapay zekanın bulduğu SEO etiketleri: ${aiTags.join(', ')}\nSisteme entegre ediliyor...`);
+
+                    for (const tag of aiTags) {
+                        try {
+                            const searchRes = await wp.tags().param('search', tag);
+                            if (searchRes && searchRes.length > 0) {
+                                generatedTags.push(searchRes[0].id);
+                            } else {
+                                const created = await wp.tags().create({ name: tag });
+                                generatedTags.push(created.id);
+                            }
+                        } catch (e) { } // Hatalari atla
+                    }
+                } catch (aiErr) {
+                    console.error("Yapay Zeka Hatasi:", aiErr);
+                    ctx.reply("⚠️ Yapay zeka sunucusuna erişimde hata. Habere etiketsiz devam ediliyor...");
+                }
+            }
+
             // Haberin hem öne çıkan görseli olsun hem de metnin en üstünde (yazı içinde) görünsün
             const imageHtml = `<figure class="wp-block-image size-large"><img src="${mediaUpload.source_url}" alt="${title}" style="max-width: 100%; height: auto;" /></figure>\n\n`;
             const contentWithImage = imageHtml + content;
 
             // C) Yazıyı (Post) Oluştur
-            const newPost = await wp.posts().create({
+            const postPayload = {
                 title: title,
                 content: contentWithImage,
                 status: 'publish', // Hemen yayına girmesi için 'publish'. Taslak için 'draft' yapabilirsiniz.
                 featured_media: featuredImageId // Yüklediğimiz fotoğrafı Öne Çıkan Görsel yaptık
-            });
+            };
+            if (generatedTags.length > 0) {
+                postPayload.tags = generatedTags;
+            }
+
+            const newPost = await wp.posts().create(postPayload);
 
             // Adım 4: İşlem başarılı!
             ctx.reply(`🎉 Haber başarıyla yayınlandı!\n\n🔗 Link: ${newPost.link}`);
